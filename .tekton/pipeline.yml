@@ -1,0 +1,103 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: oc-final
+spec:
+  description: CI/CD pipeline for the final project - cleanup, clone, lint, test, build and deploy
+  workspaces:
+    - name: pipeline-workspace
+  params:
+    - name: repo-url
+      type: string
+      default: "https://github.com/KaranKrishnaK/ci-cd-final-project.git"
+    - name: branch
+      type: string
+      default: "main"
+    - name: build-image
+      type: string
+      default: "image-registry.openshift-image-registry.svc:5000/$(context.pipelineRun.namespace)/hitcounter:latest"
+    - name: app-name
+      type: string
+      default: "hitcounter"
+  tasks:
+    - name: init
+      taskRef:
+        name: cleanup
+      workspaces:
+        - name: source
+          workspace: pipeline-workspace
+
+    - name: clone
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      runAfter:
+        - init
+      workspaces:
+        - name: output
+          workspace: pipeline-workspace
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.branch)
+
+    - name: lint
+      taskRef:
+        name: flake8
+      runAfter:
+        - clone
+      workspaces:
+        - name: source
+          workspace: pipeline-workspace
+      params:
+        - name: image
+          value: "python:3.9-slim"
+        - name: args
+          value: ["--count", "--max-complexity=10", "--max-line-length=127", "--statistics"]
+
+    - name: tests
+      taskRef:
+        name: nose
+      runAfter:
+        - clone
+      workspaces:
+        - name: source
+          workspace: pipeline-workspace
+      params:
+        - name: args
+          value: "-v --with-spec --spec-color"
+
+    - name: build
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+      runAfter:
+        - lint
+        - tests
+      workspaces:
+        - name: source
+          workspace: pipeline-workspace
+      params:
+        - name: IMAGE
+          value: $(params.build-image)
+
+    - name: deploy
+      taskRef:
+        name: openshift-client
+        kind: ClusterTask
+      runAfter:
+        - build
+      params:
+        - name: SCRIPT
+          value: |
+            echo "Updating manifest..."
+            oc create deployment $(params.app-name) --image=$(params.build-image) --dry-run=client -o yaml | oc apply -f -
+            echo "Exposing service..."
+            oc expose deployment $(params.app-name) --port=8000 --target-port=8000 --dry-run=client -o yaml | oc apply -f -
+            oc expose service $(params.app-name) --dry-run=client -o yaml | oc apply -f -
+            echo "Waiting for rollout..."
+            oc rollout status deployment/$(params.app-name) --timeout=120s
+            echo "Application route:"
+            oc get route $(params.app-name) -o jsonpath='{.spec.host}'; echo
