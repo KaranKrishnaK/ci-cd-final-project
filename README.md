@@ -1,14 +1,24 @@
-# CI/CD Tools and Practices Final Project Template
+# CI/CD Tools and Practices Final Project
 
-This repository contains the template to be used for the Final Project for the Coursera course **CI/CD Tools and Practices**.
+**Project name:** `ci-cd-final-project`
+**Author:** Karan Krishna K
+**Course:** Continuous Integration and Continuous Delivery (CI/CD) — IBM Skills Network / Coursera
 
-## Usage
+This repository contains the final project for the Coursera course **CI/CD Tools and Practices**. It takes the sample Hit Counter Flask service provided in the course and adds a complete CI/CD pipeline around it using GitHub Actions, Tekton tasks and OpenShift Pipelines.
 
-This repository is to be used as a template to create your own repository in your own GitHub account. No need to Fork it as it has been set up as a Template. This will avoid confusion when making Pull Requests in the future.
+## Application
 
-From the GitHub **Code** page, press the green **Use this template** button to create your own repository from this template.
+The sample application is a small Flask REST API ("Hit Counter Service") that exposes:
 
-Name your repo: `ci-cd-final-project`.
+| Method | Endpoint             | Description                      |
+|--------|----------------------|----------------------------------|
+| GET    | `/health`            | Health check                     |
+| GET    | `/`                  | Service information              |
+| GET    | `/counters`          | List all counters                |
+| POST   | `/counters/<name>`   | Create a counter                 |
+| GET    | `/counters/<name>`   | Read a counter                   |
+| PUT    | `/counters/<name>`   | Increment a counter              |
+| DELETE | `/counters/<name>`   | Delete a counter                 |
 
 ## Setup
 
@@ -24,8 +34,44 @@ Then you must exit the shell and start a new one for the Python virtual environm
 exit
 ```
 
+Run the linter and the unit tests locally with:
+
+```bash
+flake8 service --count --max-complexity=10 --max-line-length=127 --statistics
+nosetests -v --with-spec --spec-color --with-coverage --cover-package=service
+```
+
 ## Tasks
 
+### 1. Continuous Integration with GitHub Actions
+
+`.github/workflows/workflow.yml` defines a **CI workflow** that runs on every push and pull request to `main` inside a `python:3.9-slim` container:
+
+1. **Checkout** the repository
+2. **Install dependencies** from `requirements.txt`
+3. **Lint with flake8**
+4. **Run unit tests with nose** (with coverage reporting for the `service` package)
+
+### 2. Tekton tasks
+
+`.tekton/tasks.yml` defines the custom Tekton tasks used by the OpenShift pipeline:
+
+- **cleanup** — empties the shared `source` workspace so every pipeline run starts from a clean slate
+- **nose** — installs the Python dependencies and runs `nosetests` against the checked-out code
+
+### 3. Continuous Delivery with OpenShift Pipelines
+
+An OpenShift pipeline named **`oc-final`** wires the tasks together:
+
+```
+cleanup → git-clone → flake8 → nose → buildah → openshift-client (deploy)
+```
+
+- A **PersistentVolumeClaim** (`oc-lab-pvc`) backs the shared `pipeline-workspace` so the cloned source is available to every task
+- **flake8** (from Tekton Hub) lints the code
+- **nose** (custom task above) runs the unit tests
+- **buildah** builds the container image from the `Dockerfile` and pushes it to the OpenShift internal registry
+- **openshift-client** deploys the image with `oc create deployment` and exposes it with a route
 
 ## License
 
